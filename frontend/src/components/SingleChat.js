@@ -7,6 +7,14 @@ import ProfileModel from './miscellaneous/ProfileModel'
 import UpdateGroupChatModel from './miscellaneous/UpdateGroupChatModel'
 import axios from 'axios'
 import ScrollableChat from './ScrollableChat'
+import io from "socket.io-client";
+import Lottie from "lottie-react";
+
+import animationData from "../animations/typing.json";
+import TypingAnimation from '../animations/TypingAnimation'
+
+const ENDPOINT="http://localhost:12000";
+var socket,selectedChatCompare;
 
 const SingleChat = ({fetchAgain, setFetchAgain}) => {
   const [messages, setMessages] = useState([]);
@@ -15,7 +23,20 @@ const SingleChat = ({fetchAgain, setFetchAgain}) => {
   const [socketConnected, setSocketConnected] = useState(false);
   const [typing, setTyping] = useState(false);
   const [istyping, setIsTyping] = useState(false);
+
+
+
   const toast = useToast();
+
+  const defaultOptions = {
+    loop: true,
+    autoplay: true,
+    animationData: animationData,
+    rendererSettings: {
+      preserveAspectRatio: "xMidYMid slice",
+    },
+  };
+  
 
   const {user,selectedChat,setSelectedChat}=ChatState()
 
@@ -31,7 +52,8 @@ const SingleChat = ({fetchAgain, setFetchAgain}) => {
       const {data}=await axios.get(`/api/message/${selectedChat._id}`,config);
       console.log(messages)
       setMessages(data)
-       setLoading(false)
+       setLoading(false);
+       socket.emit('join chat',selectedChat._id);
      } catch (error) {
       toast({
         title: "Error Occured!",
@@ -44,12 +66,39 @@ const SingleChat = ({fetchAgain, setFetchAgain}) => {
      }
   }
 
+  useEffect(() => {
+    socket = io(ENDPOINT);
+    socket.emit("setup",user);
+    socket.on('connected',()=>{
+      setSocketConnected(true)
+    })
+    socket.on('typing',()=>{
+      setIsTyping(true)
+    })
+    socket.on('stop typing',()=>{
+      setIsTyping(false)
+    })
+  },[])
+
   useEffect(()=>{
    fetchMessages();
-  },[selectedChat])
+   selectedChatCompare=selectedChat;
+  },[selectedChat]);
+
+  useEffect(()=>{
+   socket.on("message recieved",(newMessageRecieved)=>{
+    if(!selectedChatCompare || selectedChatCompare._id!==newMessageRecieved.chat._id){ 
+      //give notification
+    }else{
+      setMessages([...messages,newMessageRecieved])
+    }
+
+   })
+  })
 
   const sendMessage=async(event) =>{
     if(event.key==='Enter' && newMessage){
+      socket.emit('stop typing',selectedChat._id)
       try {
         const config={
           headers:{
@@ -64,7 +113,8 @@ const SingleChat = ({fetchAgain, setFetchAgain}) => {
         },
         config
         );
-        console.log(data);
+        socket.emit('new message',data)
+
         setMessages([...messages,data])
       } catch (error) {
         toast({
@@ -78,10 +128,26 @@ const SingleChat = ({fetchAgain, setFetchAgain}) => {
       }
     }
   }
+
+
   const typingHandler=(e) =>{
     setNewMessage(e.target.value);
+    if(!socketConnected) return;
+    if(!typing){
+      setTyping(true)
+      socket.emit('typing', selectedChat._id);
+    }
+    let lastTypingTime= new Date().getTime();
+    var timerLength=3000;
+    setTimeout(()=>{
+       var timeNow=new Date().getTime();
+       var timeDifference=timeNow-lastTypingTime;
 
-    //Typing Indicator Logic
+       if(timeDifference>=timerLength && typing){
+        socket.emit('stop typing',selectedChat._id );
+        setTyping(false);
+       }
+    },timerLength);
   }
   return (
     <>{
@@ -145,7 +211,17 @@ const SingleChat = ({fetchAgain, setFetchAgain}) => {
              isRequired
              mt={3}
              >
-              <Input 
+              {istyping ? (
+               
+               <TypingAnimation />
+                
+
+               
+              ) : (
+                <></>
+              )}
+              <Input
+ 
                variant="filled"
                bg="#E0E0E0"
                placeholder="Enter a message.."
